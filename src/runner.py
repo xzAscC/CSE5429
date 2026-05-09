@@ -1,12 +1,24 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
+import tempfile
 from dataclasses import dataclass, field
+from typing import Any
 
 from configs.experiment_config import ExperimentConfig
 from src.prompts import Prompt
-from src.utils import cleanup_gpu, setup_logging
+from src.utils import setup_logging
 
 logger = setup_logging()
+
+_SUBPROCESS_SCRIPT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "scripts",
+    "_run_subprocess.py",
+)
 
 
 @dataclass
@@ -30,77 +42,90 @@ class ConfigResult:
     skip_reason: str | None = None
 
 
-def _build_output(
-    prompt: Prompt,
-    completion,
-    config_name: str,
-    run_index: int,
-) -> InferenceOutput:
-    text = completion.outputs[0].text
-    token_ids = list(completion.outputs[0].token_ids)
-    return InferenceOutput(
-        prompt_id=prompt.id,
-        prompt_text=prompt.text,
-        output_text=text,
-        token_ids=token_ids,
-        num_generated_tokens=len(token_ids),
-        config_name=config_name,
-        run_index=run_index,
-    )
-
-
 def run_config(
     config: ExperimentConfig,
     prompts: list[Prompt],
     max_tokens: int = 256,
 ) -> ConfigResult:
-    try:
-        import vllm
-    except ImportError:
-        raise ImportError("vLLM is not installed. Install it with: pip install vllm")
+    logger.info("Running config %s in isolated subprocess...", config.display_name)
 
-    result = ConfigResult(
-        config_name=config.name,
-        display_name=config.display_name,
-    )
-    logger.info("Running config %s...", config.display_name)
+    prompts_data = [{"id": p.id, "text": p.text} for p in prompts]
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False
+    ) as tmp:
+        result_path = tmp.name
+
+    python = sys.executable
+    cmd = [
+        python,
+        _SUBPROCESS_SCRIPT,
+        config.name,
+        config.display_name,
+        json.dumps(config.llm_kwargs),
+        json.dumps(prompts_data),
+        str(config.batch_mode),
+        str(config.num_runs),
+        str(max_tokens),
+        result_path,
+    ]
 
     try:
-        sampling_params = vllm.SamplingParams(
-            temperature=0, max_tokens=max_tokens, seed=42
+        proc = subprocess.run(
+            cmd,
+            timeout=900,
+            cwd=os.getcwd(),
+        )
+    except subprocess.TimeoutExpired:
+        return ConfigResult(
+            config_name=config.name,
+            display_name=config.display_name,
+            error="Config timed out after 900 seconds",
         )
 
-        for run_idx in range(config.num_runs):
-            llm = vllm.LLM(**config.llm_kwargs)
-            try:
-                if config.batch_mode:
-                    completions = llm.generate(
-                        [p.text for p in prompts], sampling_params
-                    )
-                    for prompt, comp in zip(prompts, completions):
-                        result.outputs.append(
-                            _build_output(prompt, comp, config.name, run_idx)
-                        )
-                else:
-                    for prompt in prompts:
-                        completions = llm.generate([prompt.text], sampling_params)
-                        result.outputs.append(
-                            _build_output(prompt, completions[0], config.name, run_idx)
-                        )
-            finally:
-                del llm
-                cleanup_gpu()
+    if not os.path.exists(result_path) or os.path.getsize(result_path) == 0:
+        return ConfigResult(
+            config_name=config.name,
+            display_name=config.display_name,
+            error="No results written (process may have crashed)",
+        )
 
-    except Exception as exc:
-        result.error = str(exc)
-        logger.error("Error in config %s: %s", config.display_name, exc)
-        return result
+    with open(result_path) as f:
+        data = json.load(f)
 
-    logger.info(
-        "Config %s complete. %d outputs.",
-        config.display_name,
-        len(result.outputs),
+    result = ConfigResult(
+        config_name=data["config_name"],
+        display_name=data["display_name"],
+        error=data.get("error"),
+        skipped=data.get("skipped", False),
+        skip_reason=data.get("skip_reason"),
     )
+
+    for o in data.get("outputs", []):
+        result.outputs.append(
+            InferenceOutput(
+                prompt_id=o["prompt_id"],
+                prompt_text=o["prompt_text"],
+                output_text=o["output_text"],
+                token_ids=o["token_ids"],
+                num_generated_tokens=o["num_generated_tokens"],
+                config_name=o["config_name"],
+                run_index=o["run_index"],
+            )
+        )
+
+    if result.error:
+        logger.error("Error in config %s: %s", config.display_name, result.error)
+    else:
+        logger.info(
+            "Config %s complete. %d outputs.", config.display_name, len(result.outputs)
+        )
+
+    try:
+        os.unlink(result_path)
+    except OSError:
+        pass
+
     return result
 
 
@@ -112,7 +137,13 @@ def run_all_configs(
 ) -> dict[str, ConfigResult]:
     results: dict[str, ConfigResult] = {}
 
-    for config in configs:
+    for i, config in enumerate(configs):
+        logger.info(
+            "Starting config %d/%d: %s",
+            i + 1,
+            len(configs),
+            config.display_name,
+        )
         result = run_config(config, prompts, max_tokens)
 
         if result.error is not None and config.optional and skip_unsupported:

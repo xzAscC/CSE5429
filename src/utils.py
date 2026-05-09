@@ -41,7 +41,7 @@ def cleanup_gpu() -> None:
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
-    time.sleep(1)
+    time.sleep(3)
 
 
 def ensure_dir(path: str) -> None:
