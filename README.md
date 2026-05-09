@@ -82,9 +82,8 @@ python scripts/run_experiment.py --report-only
 | C4 | Prefix Caching | KV cache reuse | enable_prefix_caching=True |
 | C5 | Batch Processing | Parallel scheduling | Prompts run as batch |
 | C6 | Low GPU Memory | Memory pressure | gpu_memory_utilization=0.4 |
-| C7 | FP8 KV Cache | KV cache precision | kv_cache_dtype=fp8_e5m2 (optional) |
-| C8 | CPU Swap | KV cache location | swap_space=4 |
-| C9 | Determinism Check | Repeatability | 3 runs of baseline |
+| C7 | CPU Swap | KV cache location | swap_space=4 |
+| C8 | Determinism Check | Repeatability | 3 runs of baseline |
 
 ## Evaluation Metrics
 
