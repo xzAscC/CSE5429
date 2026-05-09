@@ -1,14 +1,15 @@
 .PHONY: install test run clean
 
 install:
-	pip install -r requirements.txt
+	uv venv .venv
+	uv pip install -r requirements.txt
 
 test:
-	python -m pytest tests/ -v
+	.venv/bin/python -m pytest tests/ -v
 
 run:
-	bash scripts/run_all.sh
+	bash run.sh
 
 clean:
-	rm -rf results/raw/* results/reports/*
+	rm -rf .venv results/raw/* results/reports/*
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
