@@ -37,6 +37,7 @@ configuration rather than ordinary run-to-run randomness.
 
 Modern LLM serving systems improve throughput and latency with optimizations
 such as chunked prefill, CUDA graphs, prefix caching, batching, and CPU
+offloading.  These optimizations are usually treated as implementation details:
 they should make inference faster, not change the generated text.  This report
 tests that assumption directly.
 
@@ -51,13 +52,13 @@ part of the experimental condition, not merely an engineering detail.
 The experiment uses \texttt{Qwen/Qwen2-1.5B-Instruct} served with vLLM v0.20.1
 on a single NVIDIA RTX 4090.  All completed runs use greedy decoding with
 temperature $=0$, seed $=42$, maximum context length 2048, and maximum generation
-length 128.  The prompt set contains 20 prompts spanning factual, creative,
-reasoning, code-generation, and edge-case inputs.  Each inference configuration
-is run in an isolated subprocess to avoid GPU-memory state carrying over between
-configurations.
+length 128.  The prompt set contains 20 prompts spanning short factual, medium
+creative, long reasoning, code-generation, edge-case, and repetition-sensitive
+inputs.  Each inference configuration is run in an isolated subprocess to avoid
+GPU-memory state carrying over between configurations.
 
 Table~\ref{tab:configs} summarizes the tested configurations.  C7 is optional
-and was skipped in the final run because FP8 KV cache initialization failed on
+and was skipped in the final run because FP8 KV cache initialization failed in
 this environment.
 
 \begin{table}[h]
@@ -90,10 +91,11 @@ identical.
 
 \section{Results}
 
-Nine of ten configurations completed.  C7 was skipped; all other configurations
-produced 20 outputs, except C9, which produced 60 outputs because it repeats the
-baseline three times.  Table~\ref{tab:main-results} reports each completed
-non-baseline configuration against C0.
+Nine of ten configurations completed.  C7 was skipped after FP8 KV cache
+initialization failed; all other configurations produced 20 outputs, except C9,
+which produced 60 outputs because it repeats the baseline three times.
+Table~\ref{tab:main-results} reports each completed non-baseline configuration
+against C0.
 
 \begin{table}[h]
 \centering
@@ -116,11 +118,12 @@ C9 Determinism    & \textcolor{identical}{1.000} & \textcolor{identical}{100.0} 
 \end{tabular}
 \end{table}
 
-The main result is sharp: chunked prefill, prefix caching, low memory, CPU
-processing are not.  CUDA graphs match only 5 of 20 prompts exactly.  Batch
-processing matches 10 of 20 prompts exactly.  C9 confirms that the baseline is
-stable across repeated runs, so the C3 and C5 differences are not explained by
-ordinary nondeterministic reruns of C0.
+The main result is sharp: chunked prefill, prefix caching, low memory, and CPU
+offload are identical to the baseline; CUDA graphs and batch processing are not.
+CUDA graphs match only 5 of 20 prompts exactly.  Batch processing matches 10 of
+20 prompts exactly.  C9 confirms that the baseline is stable across repeated
+runs, so the C3 and C5 differences are not explained by ordinary
+nondeterministic reruns of C0.
 
 \begin{figure}[h]
 \centering
@@ -134,6 +137,8 @@ ordinary nondeterministic reruns of C0.
 The results suggest a useful distinction between \emph{memory-management}
 optimizations and \emph{execution-path} optimizations.  The memory-oriented
 changes tested here---prefix caching, lower GPU memory utilization, and CPU
+offload---do not change outputs.  They appear transparent for this model,
+prompt set, and decoding setup.
 
 CUDA graphs and batch processing are different.  Both change how GPU work is
 scheduled or replayed.  A plausible explanation is numerical sensitivity:
