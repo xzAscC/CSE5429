@@ -37,6 +37,13 @@ results/reports/*
 # Jupyter
 .ipynb_checkpoints/
 
+# LaTeX build artifacts
+*.aux
+*.fdb_latexmk
+*.fls
+*.out
+*.synctex.gz
+
 # Logs
 *.log
 

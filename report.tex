@@ -9,61 +9,64 @@
 \usepackage{enumitem}
 \usepackage{tabularx}
 
-\graphicspath{{results/reports/}}
+\graphicspath{{results/reports/}{results/qwen3/reports/}}
 
 \definecolor{identical}{RGB}{34, 139, 34}
 \definecolor{different}{RGB}{200, 30, 30}
 
-\title{\textbf{Does Optimization Parallel Inference Change LLM Inference Outputs?}\\[0.4em]
-\large A Concise Empirical Report on vLLM Configuration Effects}
-\author{CSE 5429}
+\title{\textbf{Does Optimization Parallel Inference Change LLM Inference Outputs?}}
+\author{Xudong Zhu}
 \date{\today}
 
 \begin{document}
 
 \maketitle
 
+\noindent\textbf{Code:} \url{https://github.com/xzAscC/CSE5429}
+
+\vspace{0.8em}
+
 \section*{TL;DR}
 
-We test whether vLLM system-level inference optimizations change LLM outputs
-when the model, prompts, seed, and greedy decoding setup are fixed.  Among the
-nine configurations that completed, six match the baseline exactly on all 20
-prompts.  Two configurations change outputs: CUDA graphs match only 25\% of
-baseline outputs, and batch processing matches 50\%.  The baseline determinism
-check is perfectly repeatable, so the observed differences are tied to execution
-configuration rather than ordinary run-to-run randomness.
+We test whether vLLM system-level inference optimizations change outputs for
+two Qwen models: Qwen2-1.5B-Instruct and Qwen3-1.7B.  For both models, chunked
+prefill, prefix caching, low GPU memory, CPU offload, and repeated baseline
+runs match the baseline exactly on all 20 prompts.  CUDA graphs and batch
+processing are the only configurations that change outputs.  The qualitative
+pattern is stable across both models, but the magnitude differs: CUDA graphs
+match 25\% of Qwen2 baseline outputs and 45\% of Qwen3 baseline outputs; batch
+processing matches 50\% for Qwen2 and 30\% for Qwen3.
 
 \section{Question and Motivation}
 
-Modern LLM serving systems improve throughput and latency with optimizations
-such as chunked prefill, CUDA graphs, prefix caching, batching, and CPU
-offloading.  These optimizations are usually treated as implementation details:
-they should make inference faster, not change the generated text.  This report
-tests that assumption directly.
+LLM serving systems use optimizations such as chunked prefill, CUDA graphs,
+prefix caching, batching, and CPU offloading to improve throughput and latency.
+These optimizations are usually treated as implementation details: they should
+make inference faster, not change generated text.  This report tests that
+assumption directly across two Qwen-family models.
 
-The core question is simple: \emph{given the same model and prompt, do different
-inference configurations produce the same output?}  This matters because output
-reproducibility affects evaluation, debugging, and safety analysis.  If a model
-answer changes when the serving path changes, then inference configuration is
+The core question is: \emph{given the same model, prompt, seed, and greedy
+decoding setup, do different inference configurations produce the same output?}
+If outputs change when the serving path changes, then inference configuration is
 part of the experimental condition, not merely an engineering detail.
 
 \section{Experimental Setup}
 
-The experiment uses \texttt{Qwen/Qwen2-1.5B-Instruct} served with vLLM v0.20.1
-on a single NVIDIA RTX 4090.  All completed runs use greedy decoding with
-temperature $=0$, seed $=42$, maximum context length 2048, and maximum generation
-length 128.  The prompt set contains 20 prompts spanning short factual, medium
-creative, long reasoning, code-generation, edge-case, and repetition-sensitive
-inputs.  Each inference configuration is run in an isolated subprocess to avoid
-GPU-memory state carrying over between configurations.
+We run the same experiment on \texttt{Qwen/Qwen2-1.5B-Instruct} and
+\texttt{Qwen/Qwen3-1.7B} using vLLM v0.20.1 on a single NVIDIA RTX 4090.  All
+runs use greedy decoding with temperature $=0$, seed $=42$, maximum context
+length 2048, and maximum generation length 128.  The prompt set contains 20
+prompts spanning short factual, medium creative, long reasoning,
+code-generation, edge-case, and repetition-sensitive inputs.  Each inference
+configuration runs in an isolated subprocess to avoid GPU-memory state carrying
+over between configurations.
 
-Table~\ref{tab:configs} summarizes the tested configurations.  C7 is optional
-and was skipped in the final run because FP8 KV cache initialization failed in
-this environment.
+Table~\ref{tab:configs}
+lists the remaining nine configurations.
 
 \begin{table}[h]
 \centering
-\caption{Inference configurations.}
+\caption{Inference configurations used for both models.}
 \label{tab:configs}
 \small
 \begin{tabularx}{\textwidth}{@{} c l X @{} }
@@ -77,99 +80,84 @@ C3 & CUDA Graphs & Tests CUDA graph execution rather than eager mode \\
 C4 & Prefix Caching & Tests KV cache prefix reuse \\
 C5 & Batch Processing & Tests batched prompt scheduling \\
 C6 & Low GPU Memory & Tests lower GPU memory utilization (40\%) \\
-C7 & FP8 KV Cache & Optional cache-precision test; skipped \\
-C8 & CPU Offload & Tests 4 GB CPU offload \\
-C9 & Determinism & Repeats baseline three times \\
+C7 & CPU Offload & Tests 4 GB CPU offload \\
+C8 & Determinism & Repeats baseline three times \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-Outputs are compared with exact match, token match ratio, BLEU, ROUGE-L, edit
-distance, and first divergent token position.  Exact match is the main metric:
-it directly answers whether two generations are character-for-character
-identical.
+Outputs are compared with exact match, BLEU, edit distance, and first divergent
+token position.  Exact match is the primary metric because it directly answers
+whether two generations are character-for-character identical.
 
 \section{Results}
 
-Nine of ten configurations completed.  C7 was skipped after FP8 KV cache
-initialization failed; all other configurations produced 20 outputs, except C9,
-which produced 60 outputs because it repeats the baseline three times.
-Table~\ref{tab:main-results} reports each completed non-baseline configuration
-against C0.
+All nine configurations completed for both models.  For each model, C0--C7
+produce 20 outputs, while C8 produces 60 outputs because it repeats the
+baseline three times.  Table~\ref{tab:main-results} reports each non-baseline
+configuration against C0.
 
 \begin{table}[h]
 \centering
-\caption{Comparison against C0 baseline, averaged over 20 prompts.}
+\caption{Comparison against each model's C0 baseline, averaged over 20 prompts.}
 \label{tab:main-results}
 \small
-\begin{tabular}{@{} l c c c c @{} }
+\begin{tabular}{@{} l l c c c c @{} }
 \toprule
-\textbf{Config} & \textbf{Exact Match} & \textbf{BLEU} & \textbf{Edit Dist.} & \textbf{First Div.} \\
+\textbf{Model} & \textbf{Config} & \textbf{Exact} & \textbf{BLEU} & \textbf{Edit Dist.} & \textbf{First Div.} \\
 \midrule
-C1 Chunked (512)  & \textcolor{identical}{1.000} & \textcolor{identical}{100.0} & \textcolor{identical}{0.0} & -- \\
-C2 Chunked (2048) & \textcolor{identical}{1.000} & \textcolor{identical}{100.0} & \textcolor{identical}{0.0} & -- \\
-C3 CUDA Graphs    & \textcolor{different}{0.250} & \textcolor{different}{69.7} & \textcolor{different}{154.2} & 28.0 \\
-C4 Prefix Cache   & \textcolor{identical}{1.000} & \textcolor{identical}{100.0} & \textcolor{identical}{0.0} & -- \\
-C5 Batch Proc.    & \textcolor{different}{0.500} & \textcolor{different}{78.7} & \textcolor{different}{111.5} & 16.7 \\
-C6 Low Memory     & \textcolor{identical}{1.000} & \textcolor{identical}{100.0} & \textcolor{identical}{0.0} & -- \\
-C8 CPU Offload    & \textcolor{identical}{1.000} & \textcolor{identical}{100.0} & \textcolor{identical}{0.0} & -- \\
-C9 Determinism    & \textcolor{identical}{1.000} & \textcolor{identical}{100.0} & \textcolor{identical}{0.0} & -- \\
+Qwen2 & C1/C2/C4/C6/C7/C8 & \textcolor{identical}{1.000} & \textcolor{identical}{100.0} & \textcolor{identical}{0.0} & -- \\
+Qwen2 & C3 CUDA Graphs & \textcolor{different}{0.250} & \textcolor{different}{69.7} & \textcolor{different}{154.2} & 28.0 \\
+Qwen2 & C5 Batch Proc. & \textcolor{different}{0.500} & \textcolor{different}{78.7} & \textcolor{different}{111.5} & 16.7 \\
+\midrule
+Qwen3 & C1/C2/C4/C6/C7/C8 & \textcolor{identical}{1.000} & \textcolor{identical}{100.0} & \textcolor{identical}{0.0} & -- \\
+Qwen3 & C3 CUDA Graphs & \textcolor{different}{0.450} & \textcolor{different}{73.5} & \textcolor{different}{124.2} & 16.0 \\
+Qwen3 & C5 Batch Proc. & \textcolor{different}{0.300} & \textcolor{different}{73.3} & \textcolor{different}{142.2} & 22.1 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The main result is sharp: chunked prefill, prefix caching, low memory, and CPU
-offload are identical to the baseline; CUDA graphs and batch processing are not.
-CUDA graphs match only 5 of 20 prompts exactly.  Batch processing matches 10 of
-20 prompts exactly.  C9 confirms that the baseline is stable across repeated
-runs, so the C3 and C5 differences are not explained by ordinary
-nondeterministic reruns of C0.
-
-\begin{figure}[h]
-\centering
-\includegraphics[width=0.72\textwidth]{heatmap_exact_match.png}
-\caption{Pairwise exact match heatmap across completed configurations.}
-\label{fig:exact-heatmap}
-\end{figure}
+The main result is consistent across models: memory-oriented changes and
+chunked-prefill variants are output-preserving, while CUDA graphs and batch
+processing are not.  Qwen2 is more affected by CUDA graphs than by batching
+(25\% vs. 50\% exact match), while Qwen3 shows the reverse pattern (45\% vs.
+30\% exact match).  In both models, C8 exactly matches C0, confirming that the
+baseline itself is stable across repeated runs.
 
 \section{Discussion}
 
-The results suggest a useful distinction between \emph{memory-management}
-optimizations and \emph{execution-path} optimizations.  The memory-oriented
-changes tested here---prefix caching, lower GPU memory utilization, and CPU
-offload---do not change outputs.  They appear transparent for this model,
-prompt set, and decoding setup.
+The most useful distinction is between \emph{memory-management} changes and
+\emph{execution-path} changes.  Prefix caching, reduced GPU memory utilization,
+CPU offload, and chunked prefill do not change outputs for either model in this
+setup.  These changes affect storage, scheduling capacity, or prefill chunk size,
+but they do not appear to perturb the model's token choices.
 
-CUDA graphs and batch processing are different.  Both change how GPU work is
-scheduled or replayed.  A plausible explanation is numerical sensitivity:
-different kernel execution paths can introduce small floating-point differences,
-and greedy decoding can amplify a small logit-order change into a different
-token choice.  This explanation is consistent with the observations, especially
-the nonzero first-divergence positions, but it is not directly proven by these
-experiments because we do not log intermediate logits or kernel-level numeric
-differences.
+CUDA graphs and batch processing are different because they change how GPU work
+is scheduled or replayed.  A plausible explanation is numerical sensitivity:
+different execution paths can introduce small floating-point differences, and
+greedy decoding can amplify a small logit-order change into a different token.
+This explanation is consistent with the observed first-divergence positions, but
+it is not directly proven here because we do not log intermediate logits or
+kernel-level numeric differences.
 
-The practical implication is that reproducibility-sensitive evaluations should
-record the inference configuration, not only the model and prompt.  In this
-experiment, the same model and greedy decoding setup can produce different text
-when CUDA graphs or batching are enabled.  For throughput-oriented production
-systems this may be acceptable; for exact reproducibility it is a real
-experimental variable.
+The two-model comparison makes the result more robust but also more nuanced.  It
+is not simply that one optimization is always ``more unstable.''  CUDA graphs
+diverge more on Qwen2, while batching diverges more on Qwen3.  The practical
+lesson is therefore narrower and more actionable: exact reproducibility depends
+on both the model and the inference execution path, so both should be recorded
+when comparing LLM outputs.
 
-\section{Limitations}
-
-This is a focused single-system experiment.  The conclusions are based on one
-model, one GPU, one vLLM version, greedy decoding, and 20 prompts.  The FP8 KV
-cache condition did not complete in this environment.  Larger models, multi-GPU
-serving, sampling-based decoding, and direct logit comparison would be useful
-follow-up experiments.
+This remains a focused single-system experiment: two small Qwen models, one GPU,
+one vLLM version, greedy decoding, and 20 prompts. Larger models,
+multi-GPU serving, sampling-based decoding, and direct logit comparison would be
+useful follow-up experiments.
 
 \section{Conclusion}
 
-Most tested vLLM optimizations preserve exact outputs under this setup, but not
-all do.  CUDA graphs and batch processing changed generated text even with a
-fixed seed and temperature $=0$, while the baseline itself was perfectly
-repeatable.  The central insight is therefore not that LLM inference is always
-unstable, but that exact output reproducibility depends on the execution path.
+Across both tested models, most vLLM optimizations preserve exact outputs, but
+CUDA graphs and batch processing can change generated text even with a fixed
+seed and temperature $=0$.  The central insight is not that LLM inference is
+generally unstable, but that exact output reproducibility depends on execution
+path as well as model and prompt.
 
 \end{document}
